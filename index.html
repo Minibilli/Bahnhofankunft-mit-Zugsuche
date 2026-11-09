@@ -87,7 +87,7 @@
 </head>
 <body>
 <header>
-  <div class="top"><h1 id="station">Ankünfte</h1><div class="topbtns"><button id="gosearch">Zug suchen</button><button id="cfg" title="Datenquelle einstellen">&#9881;</button></div></div>
+  <div class="top"><h1 id="station">Ankünfte</h1><div class="topbtns"><button id="gosearch">Zug suchen</button></div></div>
   <div class="sub" id="upd">Bahnhof eingeben oder Standort nutzen</div>
   <div class="row">
     <input id="q" type="search" placeholder="Bahnhof suchen …" autocomplete="off">
@@ -106,7 +106,7 @@
 </header>
 <div id="msg"></div>
 <ul id="list"></ul>
-<footer>Daten: <a href="https://transitous.org/sources/">Transitous</a> · Karten: © OpenStreetMap-Mitwirkende · Version 8</footer>
+<footer>Daten: <a href="https://transitous.org/sources/">Transitous</a> · Karten: © OpenStreetMap-Mitwirkende · Version 9</footer>
 
 <div id="search">
   <header>
@@ -146,50 +146,108 @@ const fmt = iso => new Date(iso).toLocaleTimeString("de-DE", {hour:"2-digit", mi
 const save = s => { try { localStorage.setItem("stop", JSON.stringify(s)); } catch (e) {} };
 const restore = () => { try { return JSON.parse(localStorage.getItem("stop")); } catch (e) { return null; } };
 
-// ---------- Datenquelle bahn.expert über eigenen Zwischenserver ----------
-const getProxy = () => { try { return (localStorage.getItem("proxy") || "").trim().replace(/\/+$/, ""); } catch (e) { return ""; } };
-const useBE = () => !!getProxy();
-async function be(path, input) {
+// ---------- Datenquelle: offizielle DB-Timetables-API über eigenen Zwischenserver ----------
+const DBW = "https://lively-king-6a88.mario-2504.workers.dev";
+async function dbGet(path) {
   let r;
-  try { r = await fetch(getProxy() + "/" + path, {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({json: input})}); }
-  catch (e) { throw new Error("Zwischenserver nicht erreichbar (Adresse prüfen)"); }
-  if (!r.ok) throw new Error("bahn.expert meldet HTTP " + r.status);
-  const j = await r.json();
-  return j.json;
+  try { r = await fetch(DBW + "/db/" + path); }
+  catch (e) { throw new Error("Zwischenserver nicht erreichbar"); }
+  if (!r.ok) {
+    let b = ""; try { b = (await r.text()).replace(/\s+/g, " ").slice(0, 120); } catch (e) {}
+    throw new Error("DB-Schnittstelle meldet HTTP " + r.status + (b ? ": " + b : ""));
+  }
+  const doc = new DOMParser().parseFromString(await r.text(), "application/xml");
+  if (doc.querySelector("parsererror")) throw new Error("Antwort der DB nicht lesbar");
+  return doc;
 }
+const pad2 = n => String(n).padStart(2, "0");
+const dbDate = d => pad2(d.getFullYear() % 100) + pad2(d.getMonth() + 1) + pad2(d.getDate());
+const dbTime = s => s && s.length === 10 ? new Date(2000 + +s.slice(0, 2), +s.slice(2, 4) - 1, +s.slice(4, 6), +s.slice(6, 8), +s.slice(8, 10)) : null;
 const leadLetters = x => { const m = String(x || "").toUpperCase().trim().match(/^[A-ZÄÖÜ]+/); return m ? m[0] : ""; };
-// bahn.expert-Abfahrt -> Zeile im gleichen Format wie die Transitous-Ankünfte
-function beRow(d) {
-  const tr = d.train || {}, arr = d.arrival;
-  const nm = String(tr.line || tr.name || "").trim();
-  const msgs = d.messages ? [].concat(d.messages.delay || [], d.messages.qos || []) : [];
-  return {
-    displayName: nm || tr.category || "Zug",
-    routeShortName: leadLetters(nm) || tr.category || "",
-    tripShortName: tr.journeyNumber ? String(tr.journeyNumber) : "",
-    mode: "RAIL",
-    realTime: !!arr && typeof arr.delay === "number",
-    cancelled: !!(d.cancelled || (arr && arr.cancelled)),
-    tripFrom: {name: (d.route && d.route[0] && d.route[0].name) || ""},
-    headsign: d.destination,
-    place: {scheduledArrival: arr && arr.scheduledTime, arrival: arr && arr.time, track: arr && (arr.platform || arr.scheduledPlatform)},
-    reason: (msgs.map(m => m && m.text).filter(Boolean)[0]) || "",
-    be: d
-  };
+
+// Bahnhofssuche bei der DB (liefert Name + EVA-Nummer)
+async function dbStations(term) {
+  const doc = await dbGet("station/" + encodeURIComponent(term));
+  return [...doc.querySelectorAll("station")].map(e => ({name: e.getAttribute("name"), eva: e.getAttribute("eva")})).filter(x => x.eva);
 }
-// bahn.expert-Zuglauf -> Halteliste für die Positionsanzeige
-function bePts(t) {
-  return (t.stops || []).map(st => {
-    const ar = st.arrival, de = st.departure;
-    return {
-      name: st.stopPlace && st.stopPlace.name, stopId: st.stopPlace && st.stopPlace.evaNumber,
-      arrival: ar && ar.time, scheduledArrival: ar && ar.scheduledTime,
-      departure: de && de.time, scheduledDeparture: de && de.scheduledTime,
-      track: (ar && (ar.platform || ar.scheduledPlatform)) || (de && (de.platform || de.scheduledPlatform)) || "",
-      cancelled: !!((ar && ar.cancelled) || (de && de.cancelled)),
-      rt: !!((ar && typeof ar.delay === "number") || (de && typeof de.delay === "number"))
-    };
-  });
+async function dbEva(name) {
+  const tries = [name, name.split(",")[0], name.replace(/\(.*?\)/g, "")].map(x => x.trim()).filter((x, i, a) => x.length > 1 && a.indexOf(x) === i);
+  for (const t of tries) {
+    let l; try { l = await dbStations(t); } catch (e) { if (/HTTP 404/.test(e.message)) continue; throw e; }
+    if (!l.length) continue;
+    const ex = l.find(x => x.name.toLowerCase() === name.toLowerCase());
+    return (ex || l[0]).eva;
+  }
+  throw new Error("Bahnhof nicht in der DB-Datenbank gefunden: " + name);
+}
+
+// Ankunftstafel: Fahrplan (plan, mehrere Stunden) + aktuelle Änderungen (fchg) zusammengeführt
+async function dbBoard(eva, stationName) {
+  const now = new Date();
+  const hrs = [-1, 0, 1, 2, 3].map(k => new Date(now.getTime() + k * 3600000));
+  const [chg, ...plans] = await Promise.all([
+    dbGet("fchg/" + eva).catch(() => null),
+    ...hrs.map(h => dbGet(`plan/${eva}/${dbDate(h)}/${pad2(h.getHours())}`).catch(() => null))
+  ]);
+  if (!plans.some(Boolean)) throw new Error("Keine Fahrplandaten von der DB erhalten");
+  const ch = new Map();
+  if (chg) for (const s of chg.querySelectorAll("s")) {
+    const ar = s.querySelector("ar");
+    if (ar) ch.set(s.getAttribute("id"), {ct: ar.getAttribute("ct"), cp: ar.getAttribute("cp"), cs: ar.getAttribute("cs")});
+  }
+  const seen = new Set(), out = [];
+  const lo = now.getTime() - 60000, hi = now.getTime() + 3 * 3600000;
+  for (const doc of plans) {
+    if (!doc) continue;
+    for (const s of doc.querySelectorAll("s")) {
+      const id = s.getAttribute("id");
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const ar = s.querySelector("ar");
+      if (!ar) continue;                               // Startbahnhof des Zuges: keine Ankunft
+      const dp = s.querySelector("dp"), tl = s.querySelector("tl");
+      const c = ch.get(id) || {};
+      const planned = dbTime(ar.getAttribute("pt"));
+      if (!planned) continue;
+      const actual = dbTime(c.ct) || planned;
+      if (actual < lo || actual > hi) continue;
+      const cat = tl ? tl.getAttribute("c") || "" : "", num = tl ? tl.getAttribute("n") || "" : "";
+      const ln = ar.getAttribute("l") || "";
+      const nm = ln ? (/^[A-Za-zÄÖÜ]/.test(ln) ? ln : cat + ln) : (cat + " " + num).trim();
+      const arPath = (ar.getAttribute("ppth") || "").split("|").filter(Boolean);
+      const dpPath = dp ? (dp.getAttribute("ppth") || "").split("|").filter(Boolean) : [];
+      out.push({
+        displayName: nm, routeShortName: leadLetters(nm) || cat, tripShortName: num, mode: "RAIL",
+        realTime: !!chg, cancelled: c.cs === "c",
+        tripFrom: {name: arPath[0] || ""}, headsign: dpPath.length ? dpPath[dpPath.length - 1] : stationName,
+        place: {scheduledArrival: planned.toISOString(), arrival: actual.toISOString(), track: c.cp || ar.getAttribute("pp") || ""},
+        reason: "", db: {id, planned, actual, cat, num, arPath, dpPath, station: stationName}
+      });
+    }
+  }
+  return out.sort((a, b) => a.db.actual - b.db.actual);
+}
+
+// Passenden Zuglauf bei Transitous finden (für die Positionsanzeige im Zugdetail)
+async function dbTripId(a) {
+  const d = a.db;
+  if (!stop.id) {
+    const g = await api(`/v1/geocode?text=${encodeURIComponent(d.station)}&type=STOP&language=de`);
+    const ex = g.find(x => x.name.toLowerCase() === d.station.toLowerCase()) || g[0];
+    if (!ex) return null;
+    stop.id = ex.id; save(stop);
+  }
+  const t0 = new Date(d.planned.getTime() - 15 * 60000);
+  const data = await api(`/v5/stoptimes?stopId=${encodeURIComponent(stop.id)}&n=60&arriveBy=true&time=${encodeURIComponent(t0.toISOString())}&direction=LATER`);
+  const want = String(d.num).replace(/\D/g, "");
+  let best = null, bestDiff = Infinity;
+  for (const st of (data.stopTimes || [])) {
+    const nums = [st.tripShortName, st.displayName, st.routeShortName].filter(Boolean).map(x => (String(x).match(/(\d+)\s*$/) || [])[1]);
+    if (!want || !nums.includes(want)) continue;
+    const diff = Math.abs(ms(st.place && st.place.scheduledArrival) - d.planned.getTime());
+    if (diff < bestDiff) { best = st; bestDiff = diff; }
+  }
+  return best && bestDiff <= 20 * 60000 ? best.tripId : null;
 }
 
 async function api(path) {
@@ -307,7 +365,7 @@ function render() {
     const from = (a.tripFrom && a.tripFrom.name) || "Herkunft unbekannt";
     const track = pl.track ? " · Gl. " + pl.track : "";
     const plan = (txt.startsWith("+") ? " · plan " + fmt(planned) : "");
-    li.querySelector(".from").textContent = "von " + from + track + plan + (a.be && a.tripShortName ? " · Zugnr. " + a.tripShortName : "") + (a.reason ? " · " + a.reason : "");
+    li.querySelector(".from").textContent = "von " + from + track + plan + (a.db && a.tripShortName ? " · Zugnr. " + a.tripShortName : "") + (a.reason ? " · " + a.reason : "");
     li.className = "tap";
     li.onclick = () => openTrip(a);
     ul.appendChild(li);
@@ -322,8 +380,8 @@ const tArr = p => p.arrival || p.departure;
 const tDep = p => p.departure || p.arrival;
 
 function openTrip(a) {
-  if (!a.tripId && !a.be && !a.beJid) { alert("Für diesen Zug liegen keine Fahrtdaten vor."); return; }
-  tripRef = {id: a.tripId, name: a.displayName || a.routeShortName || "Zug", row: a.be ? a : null, jid: a.beJid || null};
+  if (!a.tripId && !a.db) { alert("Für diesen Zug liegen keine Fahrtdaten vor."); return; }
+  tripRef = {id: a.tripId, name: a.displayName || a.routeShortName || "Zug", row: a.db ? a : null};
   $("dtitle").textContent = tripRef.name + (a.headsign ? " → " + a.headsign : "");
   $("dupd").textContent = "";
   $("banner").textContent = "Lade …";
@@ -355,25 +413,36 @@ $("dback").onclick = () => closeTrip(false);
 async function loadTrip() {
   if (!tripRef) return;
   try {
-    if (tripRef.row || tripRef.jid) {
-      if (!tripRef.jid) {
-        const d = tripRef.row.be, tr = d.train || {};
-        const f = await be("journey/find", {journeyNumber: String(tr.journeyNumber), category: tr.category, evaNumberAlongRoute: d.currentStopPlace && d.currentStopPlace.evaNumber, withOEV: true, limit: 1});
-        if (!f || !f.length) throw new Error("Zug bei bahn.expert nicht gefunden");
-        tripRef.jid = f[0].journeyId;
-      }
-      const t = await be("journey/detailsByJourneyId", tripRef.jid);
+    if (!tripRef.id && tripRef.row) {
+      tripRef.id = await dbTripId(tripRef.row);
       if (!tripRef) return;
-      const pts = bePts(t);
-      renderPts(pts, pts.some(p => p.rt));
-    } else {
-      const t = await api(`/v5/trip?tripId=${encodeURIComponent(tripRef.id)}`);
-      if (!tripRef) return;
-      renderTrip(t);
+      if (!tripRef.id) { renderDbOnly(tripRef.row); $("dupd").textContent = ""; return; }
     }
+    const t = await api(`/v5/trip?tripId=${encodeURIComponent(tripRef.id)}`);
+    if (!tripRef) return;
+    renderTrip(t);
     $("dupd").textContent = "Stand " + new Date().toLocaleTimeString("de-DE", {hour:"2-digit", minute:"2-digit", second:"2-digit"});
   } catch (e) {
     $("dupd").textContent = "Fehler: " + e.message;
+  }
+}
+
+function renderDbOnly(a) {
+  const d = a.db;
+  const B = $("banner"); B.innerHTML = "";
+  const m = document.createElement("div"), sm = document.createElement("small");
+  m.textContent = "Livepositionen für diesen Zug nicht verfügbar";
+  const dl = Math.round((d.actual - d.planned) / 60000);
+  sm.textContent = "Ankunft in " + d.station + " " + fmt(d.actual) + (dl >= 1 ? " (+" + dl + " min)" : "") + " · hier nur die Fahrplanstrecke";
+  B.appendChild(m); B.appendChild(sm);
+  const ul = $("stops"); ul.innerHTML = "";
+  const names = [...d.arPath.map(n => [n, 0]), [d.station, 1], ...d.dpPath.map(n => [n, 0])];
+  for (const [n, mine] of names) {
+    const li = document.createElement("li");
+    li.className = mine ? "cur mine" : "";
+    li.innerHTML = '<div class="t"></div><div class="rail"><div class="dot"></div></div><div class="nm"><b></b></div><div class="dl"></div>';
+    li.querySelector("b").textContent = n;
+    ul.appendChild(li);
   }
 }
 
@@ -476,24 +545,19 @@ async function load() {
   $("station").textContent = stop.name;
   $("upd").textContent = "Lade …";
   try {
-    // Mehr Zeilen laden, damit nach dem Filtern noch genug übrig bleiben
-    if (useBE()) {
-      if (stop.src !== "be") {   // Bahnhof über bahn.expert (Eva-Nummer) neu zuordnen
-        const f = await be("stopPlace/byTerm", {searchTerm: stop.name, filterForIris: true, max: 1});
-        if (!f || !f.length) throw new Error("Bahnhof bei bahn.expert nicht gefunden: " + stop.name);
-        stop = {id: f[0].evaNumber, name: f[0].name, src: "be"};
-        save(stop);
-        $("station").textContent = stop.name;
-      }
-      const d = await be("iris/departures", {evaNumber: stop.id, lookahead: 120, lookbehind: 0});
-      rows = (d.departures || []).filter(x => x.arrival && !x.arrival.hidden).map(beRow)
-        .sort((a, b) => new Date(a.place.arrival || a.place.scheduledArrival) - new Date(b.place.arrival || b.place.scheduledArrival));
-    } else {
-      if (stop.src === "be") {   // zurück zu Transitous: Bahnhof per Name neu suchen
+    if (stop.src === "be") stop = {id: null, eva: stop.id, name: stop.name, src: "db"};
+    let got = false, dbErr = "";
+    try {
+      if (!stop.eva) { stop.eva = await dbEva(stop.name); save(stop); }
+      rows = await dbBoard(stop.eva, stop.name);
+      got = true; usedDB = true;
+    } catch (e) { dbErr = e.message; }
+    if (!got) {            // Ersatz: Transitous (weniger zuverlässige Echtzeit)
+      usedDB = false;
+      if (!stop.id) {
         const g = await api(`/v1/geocode?text=${encodeURIComponent(stop.name)}&type=STOP&language=de`);
-        if (!g.length) throw new Error("Bahnhof nicht gefunden: " + stop.name);
-        stop = {id: g[0].id, name: g[0].name};
-        save(stop);
+        if (!g.length) throw new Error(dbErr || "Bahnhof nicht gefunden: " + stop.name);
+        stop.id = g[0].id; save(stop);
       }
       const data = await api(`/v5/stoptimes?stopId=${encodeURIComponent(stop.id)}&n=60&arriveBy=true&time=${encodeURIComponent(new Date().toISOString())}&direction=LATER`);
       let arr = data.stopTimes || [];
@@ -501,13 +565,22 @@ async function load() {
       if (rail.length) arr = rail;
       rows = arr;
     }
+    drawFooter();
     loaded = true;
     render();
-    $("upd").textContent = "Stand " + new Date().toLocaleTimeString("de-DE", {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+    $("upd").textContent = "Stand " + new Date().toLocaleTimeString("de-DE", {hour:"2-digit", minute:"2-digit", second:"2-digit"})
+      + (usedDB ? " · DB-Echtzeit" : " · Ersatzquelle (DB: " + (dbErr || "?") + ")");
   } catch (e) {
     $("upd").textContent = "Fehler";
     $("msg").textContent = e.message;
   }
+}
+let usedDB = true;
+function drawFooter() {
+  document.querySelector("footer").innerHTML = (usedDB
+    ? 'Daten: DB InfraGO AG, <a href="https://creativecommons.org/licenses/by/4.0/deed.de">CC BY 4.0</a> (Timetables-API)'
+    : 'Daten: <a href="https://transitous.org/sources/">Transitous</a>')
+    + ' · Zuglauf: Transitous · Karten: © OpenStreetMap-Mitwirkende · Version 9';
 }
 
 function setStop(s) {
@@ -541,14 +614,14 @@ $("q").addEventListener("input", () => {
   debounce = setTimeout(async () => {
     const box = $("sugg"); box.innerHTML = "";
     try {
-      const j = useBE()
-        ? ((await be("stopPlace/byTerm", {searchTerm: v, filterForIris: true, max: 6})) || []).map(x => ({id: x.evaNumber, name: x.name, src: "be"}))
-        : (await api(`/v1/geocode?text=${encodeURIComponent(v)}&type=STOP&language=de`)).slice(0, 6);
+      let j;
+      try { j = (await dbStations(v)).slice(0, 6).map(x => ({eva: x.eva, name: x.name, src: "db"})); }
+      catch (e) { j = (await api(`/v1/geocode?text=${encodeURIComponent(v)}&type=STOP&language=de`)).slice(0, 6); }
       for (const s of j) {
         const d = document.createElement("div");
         const area = (s.areas || []).find(a => a.default);
         d.textContent = s.name + (area ? " · " + area.name : "");
-        d.onclick = () => setStop(s.src ? {id: s.id, name: s.name, src: "be"} : {id: s.id, name: s.name});
+        d.onclick = () => setStop(s.src === "db" ? {id: null, eva: s.eva, name: s.name, src: "db"} : {id: s.id, name: s.name});
         box.appendChild(d);
       }
       if (!j.length) box.innerHTML = "<div>Nichts gefunden</div>";
@@ -578,14 +651,12 @@ function drawSearchChips() {
     b.onclick = () => setWindow(h); pre.appendChild(b);
   }
   const sc = $("sscope"); sc.innerHTML = "";
-  if (useBE()) return;
   for (const [k, label] of [["de", "Deutschland (ICE/IC)"], ["near", "Mein Umkreis (alle Züge)"]]) {
     const b = document.createElement("button"); b.className = "chip" + (sScope === k ? " on" : ""); b.textContent = label;
     b.onclick = () => { sScope = k; drawSearchChips(); updateInfo(); }; sc.appendChild(b);
   }
 }
 function updateInfo() {
-  if (useBE()) { $("sinfo").textContent = "Sucht bei bahn.expert in ganz Deutschland nach der Zugnummer, z. B. 1601, ICE 1601 oder 10527 (alle Zugarten). Linien wie „RE 8“ findest du nur an Bahnhöfen; die Zugnummer steht dort in der Zeile."; return; }
   $("sinfo").textContent = sScope === "de"
     ? "Durchsucht ganz Deutschland, findet aber nur Fernverkehr (ICE, IC, EC). Für Regionalzüge wähle „Mein Umkreis“."
     : "Nutzt deinen Standort, prüft die Haltestellen in deiner Nähe und findet alle Zugarten, die dort halten.";
@@ -605,13 +676,6 @@ function closeSearch(fromPop) {
   if (!fromPop) { try { if (history.state && history.state.search) { skipPop = true; history.back(); } } catch (e) {} }
 }
 $("gosearch").onclick = openSearch;
-$("cfg").onclick = () => {
-  const v = prompt("Adresse deines bahn.expert-Zwischenservers (z. B. https://bahn-proxy.DEINNAME.workers.dev).\nLeer lassen, um Transitous zu nutzen:", getProxy());
-  if (v === null) return;
-  try { localStorage.setItem("proxy", v.trim()); } catch (e) {}
-  location.reload();
-};
-if (useBE()) document.querySelector("footer").innerHTML = 'Daten: bahn.expert (DB-Echtzeit) · Version 8';
 $("sback").onclick = () => closeSearch(false);
 $("sgo").onclick = runSearch;
 $("sn").addEventListener("keydown", e => { if (e.key === "Enter") runSearch(); });
@@ -704,55 +768,6 @@ async function nearSearch(tokens, from, to) {
   }
 }
 
-// Zugnummern-Suche über bahn.expert (ohne Bahnhof, ganz Deutschland)
-const RAILTYPES = new Set(["HIGH_SPEED_TRAIN", "INTERCITY_TRAIN", "INTER_REGIONAL_TRAIN", "REGIONAL_TRAIN", "CITY_TRAIN"]);
-async function beSearch(tokens, from, to) {
-  $("sinfo").textContent = "Suche bei bahn.expert …";
-  const seen = new Map();
-  let skipped = 0;
-  for (const tk of tokens) {
-    const m = tk.match(/^([A-ZÄÖÜ]*)(\d+)$/);
-    if (!m) { skipped++; continue; }
-    const input = {journeyNumber: m[2], withOEV: true, limit: 200};
-    if (m[1]) input.category = m[1];
-    const f = (await be("journey/find", input)) || [];
-    for (const x of f) {
-      const tt = x.train && x.train.transportType;
-      if (tt && !RAILTYPES.has(tt)) continue;
-      if (m[1] && x.train.category !== m[1]) continue;
-      seen.set(x.journeyId, x);
-    }
-  }
-  const cands = [...seen.values()].slice(0, 12);
-  $("sinfo").textContent = cands.length ? "Prüfe " + cands.length + " Fahrten …" : "";
-  const detail = await Promise.all(cands.map(async x => {
-    try {
-      const t = await be("journey/detailsByJourneyId", x.journeyId);
-      const pts = bePts(t);
-      if (!pts.length) return null;
-      const first = pts[0], last = pts[pts.length - 1];
-      const dep = first.departure || first.arrival, arr = last.arrival || last.departure;
-      return {x, pts, dep, arr, first: first.name, last: last.name};
-    } catch (e) { return null; }
-  }));
-  const res = detail.filter(d => d && ms(d.arr) >= from.getTime() && ms(d.dep) <= to.getTime()).sort((a, b) => ms(a.dep) - ms(b.dep));
-  const ul = $("sres");
-  $("sinfo").textContent = res.length
-    ? `${res.length} Treffer. Tippe einen Zug an, um den Verlauf zu sehen.`
-    : (cands.length
-        ? `${cands.length} Fahrten mit dieser Nummer gefunden, aber keine im gewählten Zeitraum. Vergrößere den Zeitraum.`
-        : "Keine Fahrt mit dieser Nummer gefunden." + ((skipped || tokens.some(t => /^(RE|RB|IRE|RX|S)\d{1,3}$/.test(t))) ? " Hinweis: Es werden nur Zugnummern gesucht, keine Linien wie „RE 8“. Die Zugnummer steht an Bahnhöfen in der Zeile." : ""));
-  for (const d of res) {
-    const li = document.createElement("li"); li.className = "tap";
-    li.innerHTML = '<div class="time"></div><div class="line"></div><div class="delay"></div><div class="from"></div>';
-    li.querySelector(".time").textContent = fmt(d.dep);
-    li.querySelector(".line").textContent = (d.x.train.category || "") + " " + (d.x.train.journeyNumber || "");
-    li.querySelector(".from").textContent = d.first + " → " + d.last + " · " + fmt(d.dep) + "–" + fmt(d.arr);
-    li.onclick = () => openTrip({beJid: d.x.journeyId, displayName: (d.x.train.category || "") + " " + (d.x.train.journeyNumber || ""), headsign: d.last});
-    ul.appendChild(li);
-  }
-}
-
 async function runSearch() {
   if (sBusy) return;
   const tokens = $("sn").value.split(/[,;]+/).map(x => x.toUpperCase().replace(/\s+/g, "")).filter(Boolean);
@@ -764,7 +779,6 @@ async function runSearch() {
 
   sBusy = true; $("sgo").textContent = "Suche läuft …";
   try {
-    if (useBE()) { await beSearch(tokens, from, to); return; }
     if (sScope === "near") { await nearSearch(tokens, from, to); return; }
     let box, zoom;
     if (sScope === "de") { box = [47.2, 5.8, 55.1, 15.1]; zoom = 6; }
