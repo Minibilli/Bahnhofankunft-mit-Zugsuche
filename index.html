@@ -105,7 +105,7 @@
 </header>
 <div id="msg"></div>
 <ul id="list"></ul>
-<footer>Daten: <a href="https://transitous.org/sources/">Transitous</a> · Karten: © OpenStreetMap-Mitwirkende · Version 6</footer>
+<footer>Daten: <a href="https://transitous.org/sources/">Transitous</a> · Karten: © OpenStreetMap-Mitwirkende · Version 7</footer>
 
 <div id="search">
   <header>
@@ -501,7 +501,7 @@ function drawSearchChips() {
 function updateInfo() {
   $("sinfo").textContent = sScope === "de"
     ? "Durchsucht ganz Deutschland, findet aber nur Fernverkehr (ICE, IC, EC). Für Regionalzüge wähle „Mein Umkreis“."
-    : "Nutzt deinen Standort und durchsucht etwa 20 km rundherum, dafür alle Zugarten.";
+    : "Nutzt deinen Standort, prüft die Haltestellen in deiner Nähe und findet alle Zugarten, die dort halten.";
 }
 function openSearch() {
   if (!$("sfrom").value) setWindow(6);
@@ -563,6 +563,53 @@ async function mapTrips(b, t0, t1, zoom) {
   }
 }
 
+// Umkreissuche: nächste Haltestellen um den Standort, dort nach der Zugnummer suchen
+async function nearSearch(tokens, from, to) {
+  $("sinfo").textContent = "Standort wird ermittelt …";
+  const p = await getPos();
+  const near = await api(`/v1/reverse-geocode?place=${p.coords.latitude},${p.coords.longitude}&type=STOP`);
+  const stops = new Map();
+  for (const s of near) stops.set(s.id, s.name);
+  if (stop && !stops.has(stop.id)) stops.set(stop.id, stop.name);
+  const ids = [...stops.keys()].slice(0, 8);
+  if (!ids.length) { $("sinfo").textContent = "Keine Haltestelle in deiner Nähe gefunden."; return; }
+
+  $("sinfo").textContent = "Prüfe " + ids.length + " Haltestellen …";
+  let total = 0, failed = 0;
+  const found = new Map();
+  await Promise.all(ids.map(async id => {
+    try {
+      const d = await api(`/v5/stoptimes?stopId=${encodeURIComponent(id)}&n=100&arriveBy=true&time=${encodeURIComponent(from.toISOString())}&direction=LATER`);
+      for (const a of (d.stopTimes || [])) {
+        const pl = a.place || {};
+        const t = ms(pl.arrival || pl.scheduledArrival);
+        if (!(t >= from.getTime() && t <= to.getTime())) continue;
+        total++;
+        if (!matchTokens([a.displayName, a.routeShortName, a.tripShortName], tokens)) continue;
+        const key = a.tripId || (a.displayName + t);
+        if (!found.has(key) || t < found.get(key).t) found.set(key, {a, t, stopName: stops.get(id) || pl.name || "", track: pl.track});
+      }
+    } catch (e) { failed++; }
+  }));
+
+  const res = [...found.values()].sort((x, y) => x.t - y.t);
+  const names = ids.map(i => stops.get(i)).join(", ");
+  $("sinfo").textContent = res.length
+    ? `${res.length} Treffer (${total} Zughalte an ${ids.length} Haltestellen geprüft). Tippe einen Zug an, um den Verlauf zu sehen.`
+    : `Kein Zug mit dieser Nummer gefunden. Geprüft: ${names} (${total} Zughalte im Zeitraum)${failed ? ", " + failed + " Abfragen fehlgeschlagen" : ""}. Ein Zug erscheint nur, wenn er an einer dieser Haltestellen hält.`;
+  const ul = $("sres");
+  for (const r of res) {
+    const a = r.a;
+    const li = document.createElement("li"); li.className = "tap";
+    li.innerHTML = '<div class="time"></div><div class="line"></div><div class="delay"></div><div class="from"></div>';
+    li.querySelector(".time").textContent = fmt(new Date(r.t).toISOString());
+    li.querySelector(".line").textContent = a.displayName || a.routeShortName || "Zug";
+    li.querySelector(".from").textContent = "Halt: " + r.stopName + (r.track ? " · Gl. " + r.track : "") + (a.tripFrom && a.tripFrom.name ? " · von " + a.tripFrom.name : "");
+    li.onclick = () => openTrip(a);
+    ul.appendChild(li);
+  }
+}
+
 async function runSearch() {
   if (sBusy) return;
   const tokens = $("sn").value.split(/[,;]+/).map(x => x.toUpperCase().replace(/\s+/g, "")).filter(Boolean);
@@ -574,6 +621,7 @@ async function runSearch() {
 
   sBusy = true; $("sgo").textContent = "Suche läuft …";
   try {
+    if (sScope === "near") { await nearSearch(tokens, from, to); return; }
     let box, zoom;
     if (sScope === "de") { box = [47.2, 5.8, 55.1, 15.1]; zoom = 6; }
     else {
