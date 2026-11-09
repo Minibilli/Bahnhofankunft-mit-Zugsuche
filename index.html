@@ -87,7 +87,7 @@
 </head>
 <body>
 <header>
-  <div class="top"><h1 id="station">Ankünfte</h1><div class="topbtns"><button id="gosearch">Zug suchen</button></div></div>
+  <div class="top"><h1 id="station">Ankünfte</h1><div class="topbtns"></div></div>
   <div class="sub" id="upd">Bahnhof eingeben oder Standort nutzen</div>
   <div class="row">
     <input id="q" type="search" placeholder="Bahnhof suchen …" autocomplete="off">
@@ -106,26 +106,7 @@
 </header>
 <div id="msg"></div>
 <ul id="list"></ul>
-<footer>Daten: <a href="https://transitous.org/sources/">Transitous</a> · Karten: © OpenStreetMap-Mitwirkende · Version 9</footer>
-
-<div id="search">
-  <header>
-    <button id="sback">&#8249; Zurück</button>
-    <div class="ttl"><div id="stitle">Zug suchen</div><div class="sub">nach Zugnummer, ohne Bahnhof</div></div>
-  </header>
-  <div class="sform">
-    <input id="sn" type="search" placeholder="Zugnummer, z. B. 1601 oder ICE 1601" autocomplete="off">
-    <div class="srow">
-      <label>Von<input id="sfrom" type="datetime-local"></label>
-      <label>Bis<input id="sto" type="datetime-local"></label>
-    </div>
-    <div class="chips" id="spre"></div>
-    <div class="chips" id="sscope"></div>
-    <button id="sgo">Suchen</button>
-    <div id="sinfo"></div>
-  </div>
-  <ul id="sres"></ul>
-</div>
+<footer>Daten: <a href="https://transitous.org/sources/">Transitous</a> · Karten: © OpenStreetMap-Mitwirkende · Version 10</footer>
 
 <div id="detail">
   <header>
@@ -406,7 +387,6 @@ let skipPop = false;
 window.addEventListener("popstate", () => {
   if (skipPop) { skipPop = false; return; }
   if (tripRef) closeTrip(true);
-  else if (searchOpen) closeSearch(true);
 });
 $("dback").onclick = () => closeTrip(false);
 
@@ -580,7 +560,7 @@ function drawFooter() {
   document.querySelector("footer").innerHTML = (usedDB
     ? 'Daten: DB InfraGO AG, <a href="https://creativecommons.org/licenses/by/4.0/deed.de">CC BY 4.0</a> (Timetables-API)'
     : 'Daten: <a href="https://transitous.org/sources/">Transitous</a>')
-    + ' · Zuglauf: Transitous · Karten: © OpenStreetMap-Mitwirkende · Version 9';
+    + ' · Zuglauf: Transitous · Karten: © OpenStreetMap-Mitwirkende · Version 10';
 }
 
 function setStop(s) {
@@ -614,14 +594,12 @@ $("q").addEventListener("input", () => {
   debounce = setTimeout(async () => {
     const box = $("sugg"); box.innerHTML = "";
     try {
-      let j;
-      try { j = (await dbStations(v)).slice(0, 6).map(x => ({eva: x.eva, name: x.name, src: "db"})); }
-      catch (e) { j = (await api(`/v1/geocode?text=${encodeURIComponent(v)}&type=STOP&language=de`)).slice(0, 6); }
+      const j = (await api(`/v1/geocode?text=${encodeURIComponent(v)}&type=STOP&language=de`)).slice(0, 6);
       for (const s of j) {
         const d = document.createElement("div");
         const area = (s.areas || []).find(a => a.default);
         d.textContent = s.name + (area ? " · " + area.name : "");
-        d.onclick = () => setStop(s.src === "db" ? {id: null, eva: s.eva, name: s.name, src: "db"} : {id: s.id, name: s.name});
+        d.onclick = () => setStop({id: s.id, name: s.name});
         box.appendChild(d);
       }
       if (!j.length) box.innerHTML = "<div>Nichts gefunden</div>";
@@ -633,197 +611,6 @@ $("q").addEventListener("input", () => {
     box.style.display = "block";
   }, 300);
 });
-
-// ---------- Zugsuche nach Nummer (ohne Bahnhof) ----------
-let searchOpen = false, sScope = "de", sBusy = false;
-const pad = n => String(n).padStart(2, "0");
-const toLocalInput = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-
-function setWindow(hours) {
-  const a = new Date(), b = new Date(a.getTime() + hours * 3600000);
-  $("sfrom").value = toLocalInput(a);
-  $("sto").value = toLocalInput(b);
-}
-function drawSearchChips() {
-  const pre = $("spre"); pre.innerHTML = "";
-  for (const h of [2, 6, 12]) {
-    const b = document.createElement("button"); b.className = "chip"; b.textContent = "nächste " + h + " h";
-    b.onclick = () => setWindow(h); pre.appendChild(b);
-  }
-  const sc = $("sscope"); sc.innerHTML = "";
-  for (const [k, label] of [["de", "Deutschland (ICE/IC)"], ["near", "Mein Umkreis (alle Züge)"]]) {
-    const b = document.createElement("button"); b.className = "chip" + (sScope === k ? " on" : ""); b.textContent = label;
-    b.onclick = () => { sScope = k; drawSearchChips(); updateInfo(); }; sc.appendChild(b);
-  }
-}
-function updateInfo() {
-  $("sinfo").textContent = sScope === "de"
-    ? "Durchsucht ganz Deutschland, findet aber nur Fernverkehr (ICE, IC, EC). Für Regionalzüge wähle „Mein Umkreis“."
-    : "Nutzt deinen Standort, prüft die Haltestellen in deiner Nähe und findet alle Zugarten, die dort halten.";
-}
-function openSearch() {
-  if (!$("sfrom").value) setWindow(6);
-  drawSearchChips(); updateInfo();
-  $("search").style.display = "block";
-  document.body.style.overflow = "hidden";
-  searchOpen = true;
-  try { history.pushState({search: 1}, ""); } catch (e) {}
-}
-function closeSearch(fromPop) {
-  $("search").style.display = "none";
-  if (!tripRef) document.body.style.overflow = "";
-  searchOpen = false;
-  if (!fromPop) { try { if (history.state && history.state.search) { skipPop = true; history.back(); } } catch (e) {} }
-}
-$("gosearch").onclick = openSearch;
-$("sback").onclick = () => closeSearch(false);
-$("sgo").onclick = runSearch;
-$("sn").addEventListener("keydown", e => { if (e.key === "Enter") runSearch(); });
-
-function matchTokens(names, tokens) {
-  const ns = names.filter(Boolean).map(x => String(x).toUpperCase().replace(/\s+/g, ""));
-  return tokens.some(t => ns.some(n => {
-    if (/^\d+$/.test(t)) { const d = n.match(/(\d+)$/); return d ? d[1] === t : false; }
-    return n.startsWith(t);
-  }));
-}
-
-// Karten-Abfrage mit automatischer Aufteilung, falls die Schnittstelle 422 ("zu groß") meldet
-let reqCount = 0;
-const MAXREQ = 40;
-async function mapTrips(b, t0, t1, zoom) {
-  if (++reqCount > MAXREQ) throw new Error("Für diesen Bereich liefert die Schnittstelle zu viele Daten. Wähle einen kürzeren Zeitraum oder „Mein Umkreis“.");
-  $("sinfo").textContent = "Lade Fahrten … (" + reqCount + " Teilabfragen)";
-  const q = `/v5/map/trips?zoom=${zoom}&min=${b[0].toFixed(4)},${b[1].toFixed(4)}&max=${b[2].toFixed(4)},${b[3].toFixed(4)}`
-          + `&startTime=${encodeURIComponent(new Date(t0).toISOString())}&endTime=${encodeURIComponent(new Date(t1).toISOString())}`;
-  try {
-    const r = await api(q);
-    return Array.isArray(r) ? r : (r.trips || []);
-  } catch (e) {
-    if (e.status !== 422) throw e;
-    const dt = t1 - t0, kmLat = (b[2] - b[0]) * 111, kmLon = (b[3] - b[1]) * 68;
-    // Unbekannt, was zu groß war: die Dimension halbieren, die im Verhältnis größer ist
-    const canTime = dt > 10 * 60000, canSpace = kmLat > 6 || kmLon > 6;
-    const ratioT = dt / (30 * 60000), ratioS = Math.max(kmLat, kmLon) / 15;
-    if (canTime && (ratioT >= ratioS || !canSpace)) {   // Zeitraum halbieren
-      const m = t0 + dt / 2;
-      const [x, y] = await Promise.all([mapTrips(b, t0, m, zoom), mapTrips(b, m, t1, zoom)]);
-      return x.concat(y);
-    }
-    if (canSpace) {                                // längere Seite des Gebiets halbieren
-      let b1, b2;
-      if (kmLat >= kmLon) { const m = (b[0] + b[2]) / 2; b1 = [b[0], b[1], m, b[3]]; b2 = [m, b[1], b[2], b[3]]; }
-      else { const m = (b[1] + b[3]) / 2; b1 = [b[0], b[1], b[2], m]; b2 = [b[0], m, b[2], b[3]]; }
-      const [x, y] = await Promise.all([mapTrips(b1, t0, t1, zoom), mapTrips(b2, t0, t1, zoom)]);
-      return x.concat(y);
-    }
-    throw e;
-  }
-}
-
-// Umkreissuche: nächste Haltestellen um den Standort, dort nach der Zugnummer suchen
-async function nearSearch(tokens, from, to) {
-  $("sinfo").textContent = "Standort wird ermittelt …";
-  const p = await getPos();
-  const near = await api(`/v1/reverse-geocode?place=${p.coords.latitude},${p.coords.longitude}&type=STOP`);
-  const stops = new Map();
-  for (const s of near) stops.set(s.id, s.name);
-  if (stop && !stops.has(stop.id)) stops.set(stop.id, stop.name);
-  const ids = [...stops.keys()].slice(0, 8);
-  if (!ids.length) { $("sinfo").textContent = "Keine Haltestelle in deiner Nähe gefunden."; return; }
-
-  $("sinfo").textContent = "Prüfe " + ids.length + " Haltestellen …";
-  let total = 0, failed = 0;
-  const found = new Map();
-  await Promise.all(ids.map(async id => {
-    try {
-      const d = await api(`/v5/stoptimes?stopId=${encodeURIComponent(id)}&n=100&arriveBy=true&time=${encodeURIComponent(from.toISOString())}&direction=LATER`);
-      for (const a of (d.stopTimes || [])) {
-        const pl = a.place || {};
-        const t = ms(pl.arrival || pl.scheduledArrival);
-        if (!(t >= from.getTime() && t <= to.getTime())) continue;
-        total++;
-        if (!matchTokens([a.displayName, a.routeShortName, a.tripShortName], tokens)) continue;
-        const key = a.tripId || (a.displayName + t);
-        if (!found.has(key) || t < found.get(key).t) found.set(key, {a, t, stopName: stops.get(id) || pl.name || "", track: pl.track});
-      }
-    } catch (e) { failed++; }
-  }));
-
-  const res = [...found.values()].sort((x, y) => x.t - y.t);
-  const names = ids.map(i => stops.get(i)).join(", ");
-  $("sinfo").textContent = res.length
-    ? `${res.length} Treffer (${total} Zughalte an ${ids.length} Haltestellen geprüft). Tippe einen Zug an, um den Verlauf zu sehen.`
-    : `Kein Zug mit dieser Nummer gefunden. Geprüft: ${names} (${total} Zughalte im Zeitraum)${failed ? ", " + failed + " Abfragen fehlgeschlagen" : ""}. Ein Zug erscheint nur, wenn er an einer dieser Haltestellen hält.`;
-  const ul = $("sres");
-  for (const r of res) {
-    const a = r.a;
-    const li = document.createElement("li"); li.className = "tap";
-    li.innerHTML = '<div class="time"></div><div class="line"></div><div class="delay"></div><div class="from"></div>';
-    li.querySelector(".time").textContent = fmt(new Date(r.t).toISOString());
-    li.querySelector(".line").textContent = a.displayName || a.routeShortName || "Zug";
-    li.querySelector(".from").textContent = "Halt: " + r.stopName + (r.track ? " · Gl. " + r.track : "") + (a.tripFrom && a.tripFrom.name ? " · von " + a.tripFrom.name : "");
-    li.onclick = () => openTrip(a);
-    ul.appendChild(li);
-  }
-}
-
-async function runSearch() {
-  if (sBusy) return;
-  const tokens = $("sn").value.split(/[,;]+/).map(x => x.toUpperCase().replace(/\s+/g, "")).filter(Boolean);
-  const ul = $("sres"); ul.innerHTML = "";
-  if (!tokens.length) { $("sinfo").textContent = "Bitte eine Zugnummer eingeben, z. B. 1601 oder ICE 1601."; return; }
-  const from = new Date($("sfrom").value), to = new Date($("sto").value);
-  if (isNaN(from) || isNaN(to) || to <= from) { $("sinfo").textContent = "Bitte einen gültigen Zeitraum wählen (Bis muss nach Von liegen)."; return; }
-  if (to - from > 12 * 3600000) { $("sinfo").textContent = "Der Zeitraum darf höchstens 12 Stunden lang sein."; return; }
-
-  sBusy = true; $("sgo").textContent = "Suche läuft …";
-  try {
-    if (sScope === "near") { await nearSearch(tokens, from, to); return; }
-    let box, zoom;
-    if (sScope === "de") { box = [47.2, 5.8, 55.1, 15.1]; zoom = 6; }
-    else {
-      $("sinfo").textContent = "Standort wird ermittelt …";
-      const p = await getPos();
-      const la = p.coords.latitude, lo = p.coords.longitude;
-      box = [la - 0.18, lo - 0.28, la + 0.18, lo + 0.28];   // etwa 40 x 40 km
-      zoom = 10;
-    }
-    reqCount = 0;
-    $("sinfo").textContent = "Lade Fahrten …";
-    const list = await mapTrips(box, from.getTime(), to.getTime(), zoom);
-    const found = new Map();
-    let total = 0;
-    for (const sg of list) {
-      if (sg.mode && !RAIL.test(sg.mode)) continue;
-      for (const t of (sg.trips || [])) {
-        total++;
-        if (!matchTokens([t.displayName, t.routeShortName, t.tripShortName], tokens)) continue;
-        const f = found.get(t.tripId) || {id: t.tripId, name: t.displayName || t.routeShortName || "Zug", dep: sg.departure, arr: sg.arrival, from: sg.from && sg.from.name, to: sg.to && sg.to.name};
-        if (ms(sg.departure) < ms(f.dep)) { f.dep = sg.departure; f.from = sg.from && sg.from.name; }
-        if (ms(sg.arrival) > ms(f.arr)) { f.arr = sg.arrival; f.to = sg.to && sg.to.name; }
-        found.set(t.tripId, f);
-      }
-    }
-    const res = [...found.values()].sort((a, b) => ms(a.dep) - ms(b.dep));
-    $("sinfo").textContent = res.length
-      ? `${res.length} Treffer (von ${total} geprüften Fahrten). Tippe einen Zug an, um den Verlauf zu sehen.`
-      : `Kein Zug mit dieser Nummer gefunden (${total} Fahrten geprüft). Prüfe Nummer und Zeitraum${sScope === "de" ? " oder versuche „Mein Umkreis“ für Regionalzüge" : ""}.`;
-    for (const r of res) {
-      const li = document.createElement("li"); li.className = "tap";
-      li.innerHTML = '<div class="time"></div><div class="line"></div><div class="delay"></div><div class="from"></div>';
-      li.querySelector(".time").textContent = fmt(r.dep);
-      li.querySelector(".line").textContent = r.name;
-      li.querySelector(".from").textContent = (r.from || "?") + " → " + (r.to || "?") + " · im gewählten Zeitraum";
-      li.onclick = () => openTrip({tripId: r.id, displayName: r.name});
-      ul.appendChild(li);
-    }
-  } catch (e) {
-    $("sinfo").textContent = e.code === 1 ? "Standortzugriff wurde verweigert. Erlaube ihn im Browser oder wähle „Deutschland“." : "Fehler: " + e.message;
-  } finally {
-    sBusy = false; $("sgo").textContent = "Suchen";
-  }
-}
 
 loadFilter();
 $("num").value = numQuery;
