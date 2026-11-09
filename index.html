@@ -106,7 +106,7 @@
 </header>
 <div id="msg"></div>
 <ul id="list"></ul>
-<footer>Daten: <a href="https://transitous.org/sources/">Transitous</a> · Karten: © OpenStreetMap-Mitwirkende · Version 10</footer>
+<footer>Daten: <a href="https://transitous.org/sources/">Transitous</a> · Karten: © OpenStreetMap-Mitwirkende · Version 11</footer>
 
 <div id="detail">
   <header>
@@ -151,12 +151,24 @@ async function dbStations(term) {
   const doc = await dbGet("station/" + encodeURIComponent(term));
   return [...doc.querySelectorAll("station")].map(e => ({name: e.getAttribute("name"), eva: e.getAttribute("eva")})).filter(x => x.eva);
 }
+function nameVariants(name) {
+  const out = [];
+  const add = x => { x = x.replace(/\s+/g, " ").trim(); if (x.length > 1 && !out.includes(x)) out.push(x); };
+  const base = name.split(",")[0].replace(/\(.*?\)/g, "");
+  const hb = base.replace(/Hauptbahnhof/gi, "Hbf");
+  const strip = x => x.replace(/\b(Bahnhof|Bhf\.?|Bf\.?|Haltepunkt|Hp)\b/gi, "");
+  for (const b of [name, base, hb, strip(base), strip(hb)]) {
+    add(b); add(b.replace(/-/g, " ")); add(b.replace(/ /g, "-"));
+  }
+  const w = strip(hb).trim().split(" ");           // zuletzt: Wörter von hinten weglassen
+  for (let n = w.length - 1; n >= 1; n--) add(w.slice(0, n).join(" "));
+  return out;
+}
 async function dbEva(name) {
-  const tries = [name, name.split(",")[0], name.replace(/\(.*?\)/g, "")].map(x => x.trim()).filter((x, i, a) => x.length > 1 && a.indexOf(x) === i);
-  for (const t of tries) {
+  for (const t of nameVariants(name)) {
     let l; try { l = await dbStations(t); } catch (e) { if (/HTTP 404/.test(e.message)) continue; throw e; }
     if (!l.length) continue;
-    const ex = l.find(x => x.name.toLowerCase() === name.toLowerCase());
+    const ex = l.find(x => x.name.toLowerCase() === t.toLowerCase());
     return (ex || l[0]).eva;
   }
   throw new Error("Bahnhof nicht in der DB-Datenbank gefunden: " + name);
@@ -560,7 +572,7 @@ function drawFooter() {
   document.querySelector("footer").innerHTML = (usedDB
     ? 'Daten: DB InfraGO AG, <a href="https://creativecommons.org/licenses/by/4.0/deed.de">CC BY 4.0</a> (Timetables-API)'
     : 'Daten: <a href="https://transitous.org/sources/">Transitous</a>')
-    + ' · Zuglauf: Transitous · Karten: © OpenStreetMap-Mitwirkende · Version 10';
+    + ' · Zuglauf: Transitous · Karten: © OpenStreetMap-Mitwirkende · Version 11';
 }
 
 function setStop(s) {

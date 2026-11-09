@@ -1,5 +1,5 @@
 // Einfacher Service Worker: App-Hülle wird zwischengespeichert, Live-Daten nie.
-const CACHE = "ankuenfte-v10";
+const CACHE = "ankuenfte-v11";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", e => {
