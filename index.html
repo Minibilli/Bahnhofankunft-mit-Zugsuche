@@ -1,0 +1,646 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#ec0016">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Ankünfte</title>
+<style>
+  :root { --bg:#111; --fg:#f2f2f2; --mut:#999; --ok:#4cd964; --late:#ff9f0a; --bad:#ff453a; --card:#1c1c1e; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px system-ui, sans-serif; }
+  header { padding:14px 16px 10px; position:sticky; top:0; background:var(--bg); border-bottom:1px solid #2a2a2a; z-index:5; }
+  h1 { margin:0; font-size:20px; }
+  .sub { color:var(--mut); font-size:13px; margin-top:2px; }
+  .row { display:flex; gap:8px; margin-top:10px; position:relative; }
+  input { flex:1; min-width:0; background:var(--card); color:var(--fg); border:1px solid #333; border-radius:8px; padding:10px 12px; font-size:16px; }
+  button { background:#ec0016; color:#fff; border:0; border-radius:8px; padding:10px 14px; font-size:14px; }
+  button.sec { background:#333; }
+  #sugg { position:absolute; top:100%; left:0; right:0; background:var(--card); border:1px solid #333; border-radius:8px; margin-top:4px; max-height:50vh; overflow:auto; display:none; }
+  #sugg div { padding:12px 14px; border-bottom:1px solid #2a2a2a; }
+  #sugg div:last-child { border-bottom:0; }
+  ul { list-style:none; margin:0; padding:8px 12px 12px; }
+  li { background:var(--card); border-radius:12px; padding:12px 14px; margin-bottom:8px; display:grid; grid-template-columns:64px 1fr auto; gap:2px 12px; align-items:center; }
+  .time { font-size:22px; font-weight:700; }
+  .line { font-weight:600; }
+  .from { color:var(--mut); font-size:14px; grid-column:2; }
+  .delay { font-weight:700; text-align:right; grid-row:1 / span 2; grid-column:3; }
+  .ok { color:var(--ok); } .late { color:var(--late); } .bad { color:var(--bad); }
+  .filters { margin-top:10px; }
+  .chips { display:flex; gap:6px; overflow-x:auto; padding-bottom:2px; -webkit-overflow-scrolling:touch; }
+  .chip { flex:0 0 auto; background:var(--card); color:var(--fg); border:1px solid #333; border-radius:999px; padding:7px 14px; font-size:14px; }
+  .chip.on { background:#ec0016; border-color:#ec0016; color:#fff; }
+  .numrow { display:flex; gap:8px; margin-top:8px; }
+  .numrow input { padding:8px 12px; font-size:15px; }
+  #cnt { color:var(--mut); font-size:12px; margin-top:6px; }
+  li.tap { cursor:pointer; -webkit-tap-highlight-color:transparent; }
+  li.tap:active { background:#26262a; }
+  #detail { position:fixed; inset:0; background:var(--bg); overflow:auto; z-index:20; display:none; }
+  #detail header { display:flex; align-items:center; gap:12px; }
+  #detail header .ttl { min-width:0; }
+  #dback { margin:0; background:#333; padding:10px 14px; font-size:16px; }
+  #dtitle { font-size:20px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #banner { margin:12px; padding:14px 16px; border-radius:12px; background:#7a000d; font-size:17px; font-weight:600; line-height:1.35; }
+  #banner small { display:block; margin-top:6px; font-weight:400; font-size:13px; opacity:.85; }
+  #stops { list-style:none; margin:0; padding:4px 12px 32px; }
+  #stops li { display:grid; grid-template-columns:56px 18px 1fr auto; gap:0 10px; align-items:center; background:none; border-radius:0; padding:0; margin:0; }
+  #stops .t { font-weight:700; text-align:right; padding:9px 0; }
+  #stops .rail { align-self:stretch; position:relative; }
+  #stops .rail::before { content:""; position:absolute; left:50%; top:0; bottom:0; width:2px; margin-left:-1px; background:#444; }
+  #stops li:first-child .rail::before { top:50%; }
+  #stops li:last-child .rail::before { bottom:50%; }
+  #stops .dot { position:absolute; left:50%; top:50%; width:10px; height:10px; margin:-5px 0 0 -5px; border-radius:50%; background:#666; }
+  #stops .nm { padding:9px 0; }
+  #stops .nm small { display:block; color:var(--mut); font-size:12px; }
+  #stops .dl { font-weight:700; font-size:13px; }
+  #stops li.past { opacity:.45; }
+  #stops li.cur .dot { background:#ec0016; width:16px; height:16px; margin:-8px 0 0 -8px; box-shadow:0 0 0 4px rgba(236,0,22,.3); }
+  #stops li.cur .nm, #stops li.cur .t { color:#fff; }
+  #stops li.cur .nm b { font-size:17px; }
+  #stops li.mine .nm b::after { content:" · dein Bahnhof"; color:var(--late); font-weight:400; font-size:12px; }
+  #stops li.gap { grid-template-columns:56px 18px 1fr; min-height:34px; color:#ec0016; font-size:13px; font-weight:600; }
+  #stops li.gap .rail::before { background:repeating-linear-gradient(#ec0016 0 6px, transparent 6px 10px); width:3px; margin-left:-1.5px; }
+  #stops li.gap .nm { padding:4px 0; }
+  #stops li.cancelled .nm b { text-decoration:line-through; }
+  .top { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .top h1 { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #gosearch { margin:0; flex:0 0 auto; background:#333; padding:8px 12px; }
+  #search { position:fixed; inset:0; background:var(--bg); overflow:auto; z-index:15; display:none; }
+  #search header { display:flex; align-items:center; gap:12px; }
+  #sback { margin:0; background:#333; padding:10px 14px; font-size:16px; }
+  #stitle { font-size:20px; font-weight:700; }
+  .sform { padding:12px; display:flex; flex-direction:column; gap:10px; }
+  .sform label { display:flex; flex-direction:column; gap:4px; flex:1; min-width:0; color:var(--mut); font-size:12px; }
+  .sform .srow { display:flex; flex-direction:column; gap:8px; }
+  .sform input { width:100%; }
+  #sgo { font-size:16px; padding:12px; }
+  #sinfo { color:var(--mut); font-size:13px; line-height:1.4; }
+  #sres { list-style:none; margin:0; padding:0 12px 32px; }
+  #msg { padding:16px; color:var(--mut); }
+  footer { padding:0 16px 24px; color:var(--mut); font-size:12px; }
+  footer a { color:var(--mut); }
+</style>
+</head>
+<body>
+<header>
+  <div class="top"><h1 id="station">Ankünfte</h1><button id="gosearch">Zug suchen</button></div>
+  <div class="sub" id="upd">Bahnhof eingeben oder Standort nutzen</div>
+  <div class="row">
+    <input id="q" type="search" placeholder="Bahnhof suchen …" autocomplete="off">
+    <button id="loc" class="sec" title="Standort nutzen">Standort</button>
+    <button id="reload" title="Aktualisieren">&#x21bb;</button>
+    <div id="sugg"></div>
+  </div>
+  <div class="filters">
+    <div class="chips" id="chips"></div>
+    <div class="numrow">
+      <input id="num" type="search" placeholder="Zugnummer, z. B. 1601, RE 5" autocomplete="off" inputmode="text">
+      <button id="clr" class="sec" title="Filter zurücksetzen">Zurücksetzen</button>
+    </div>
+    <div id="cnt"></div>
+  </div>
+</header>
+<div id="msg"></div>
+<ul id="list"></ul>
+<footer>Daten: <a href="https://transitous.org/sources/">Transitous</a> · Karten: © OpenStreetMap-Mitwirkende · Version 6</footer>
+
+<div id="search">
+  <header>
+    <button id="sback">&#8249; Zurück</button>
+    <div class="ttl"><div id="stitle">Zug suchen</div><div class="sub">nach Zugnummer, ohne Bahnhof</div></div>
+  </header>
+  <div class="sform">
+    <input id="sn" type="search" placeholder="Zugnummer, z. B. 1601 oder ICE 1601" autocomplete="off">
+    <div class="srow">
+      <label>Von<input id="sfrom" type="datetime-local"></label>
+      <label>Bis<input id="sto" type="datetime-local"></label>
+    </div>
+    <div class="chips" id="spre"></div>
+    <div class="chips" id="sscope"></div>
+    <button id="sgo">Suchen</button>
+    <div id="sinfo"></div>
+  </div>
+  <ul id="sres"></ul>
+</div>
+
+<div id="detail">
+  <header>
+    <button id="dback">&#8249; Zurück</button>
+    <div class="ttl"><div id="dtitle"></div><div class="sub" id="dupd"></div></div>
+  </header>
+  <div id="banner">Lade …</div>
+  <ul id="stops"></ul>
+</div>
+
+<script>
+const API = "https://api.transitous.org/api";
+const $ = id => document.getElementById(id);
+let stop = null;
+let timer = null;
+
+const fmt = iso => new Date(iso).toLocaleTimeString("de-DE", {hour:"2-digit", minute:"2-digit"});
+const save = s => { try { localStorage.setItem("stop", JSON.stringify(s)); } catch (e) {} };
+const restore = () => { try { return JSON.parse(localStorage.getItem("stop")); } catch (e) { return null; } };
+
+async function api(path) {
+  let r;
+  try { r = await fetch(API + path); }
+  catch (e) { throw new Error("keine Verbindung zu api.transitous.org (Netz/CORS)"); }
+  if (!r.ok) { const err = new Error("Server meldet HTTP " + r.status); err.status = r.status; throw err; }
+  return r.json();
+}
+
+function getPos() {
+  return new Promise((res, rej) =>
+    navigator.geolocation.getCurrentPosition(res, rej, {enableHighAccuracy:true, timeout:15000, maximumAge:30000}));
+}
+
+async function stopFromLocation() {
+  const p = await getPos();
+  const j = await api(`/v1/reverse-geocode?place=${p.coords.latitude},${p.coords.longitude}&type=STOP`);
+  if (!j.length) throw new Error("Kein Bahnhof in der Nähe gefunden.");
+  return {id: j[0].id, name: j[0].name};
+}
+
+const RAIL = /RAIL|SUBURBAN|HIGHSPEED|LONG_DISTANCE|NIGHT|METRO/;
+
+// ---------- Filter: Zugklassen und Zugnummern ----------
+const CLASSES = [
+  {key:"FERN",  label:"ICE/IC",   test: p => ["ICE","TGV","RJX","RJ","IC","EC","ECE"].includes(p)},
+  {key:"REG",   label:"RE/RB",    test: p => ["RE","IRE","RX","RB"].includes(p)},
+  {key:"S",     label:"S-Bahn",   test: p => p === "S" || p === "SBB"},
+  {key:"SONST", label:"Sonstige", test: null}
+];
+let selClasses = new Set();
+let numQuery = "";
+
+const loadFilter = () => {
+  try {
+    const f = JSON.parse(localStorage.getItem("filter") || "{}");
+    const valid = CLASSES.map(c => c.key);
+    selClasses = new Set((f.classes || []).filter(k => valid.includes(k)));
+    numQuery = f.num || "";
+  } catch (e) {}
+};
+const saveFilter = () => {
+  try { localStorage.setItem("filter", JSON.stringify({classes:[...selClasses], num:numQuery})); } catch (e) {}
+};
+
+// Buchstaben-Präfix des Zuges, z. B. "ICE 1601" -> "ICE", "S 1" -> "S"
+function prefixOf(a) {
+  const src = (a.routeShortName || a.displayName || "").toUpperCase().trim();
+  const m = src.match(/^[A-ZÄÖÜ]+/);
+  return m ? m[0] : "";
+}
+function classKeyOf(a) {
+  const p = prefixOf(a);
+  for (const c of CLASSES) if (c.test && c.test(p)) return c.key;
+  return "SONST";
+}
+function matchesNumber(a, tokens) {
+  if (!tokens.length) return true;
+  const names = [a.displayName, a.routeShortName, a.tripShortName]
+    .filter(Boolean).map(s => String(s).toUpperCase().replace(/\s+/g, ""));
+  return tokens.some(t => names.some(n => {
+    if (/^\d+$/.test(t)) {                 // nur Ziffern: Zugnummer muss exakt stimmen
+      const d = n.match(/(\d+)$/);
+      return d ? d[1] === t : false;
+    }
+    return n.startsWith(t);                // sonst Anfang, z. B. "ICE", "ICE16", "RE5"
+  }));
+}
+function applyFilter(arr) {
+  const tokens = numQuery.split(/[,;]+/).map(s => s.toUpperCase().replace(/\s+/g, "")).filter(Boolean);
+  return arr.filter(a => (!selClasses.size || selClasses.has(classKeyOf(a))) && matchesNumber(a, tokens));
+}
+function drawChips() {
+  const box = $("chips"); box.innerHTML = "";
+  const all = document.createElement("button");
+  all.className = "chip" + (selClasses.size ? "" : " on");
+  all.textContent = "Alle";
+  all.onclick = () => { selClasses.clear(); saveFilter(); drawChips(); render(); };
+  box.appendChild(all);
+  for (const c of CLASSES) {
+    const b = document.createElement("button");
+    b.className = "chip" + (selClasses.has(c.key) ? " on" : "");
+    b.textContent = c.label;
+    b.onclick = () => { selClasses.has(c.key) ? selClasses.delete(c.key) : selClasses.add(c.key); saveFilter(); drawChips(); render(); };
+    box.appendChild(b);
+  }
+}
+
+let rows = [];   // zuletzt geladene Ankünfte (ungefiltert)
+function render() {
+  const ul = $("list"); ul.innerHTML = "";
+  $("msg").textContent = "";
+  if (!stop) return;
+  const filtered = applyFilter(rows);
+  const arr = filtered.slice(0, 15);
+  const active = selClasses.size || numQuery.trim();
+  $("cnt").textContent = rows.length ? (active ? `${arr.length} von ${rows.length} Zügen (Filter aktiv)` : "") : "";
+  if (!rows.length) { if (loaded) $("msg").textContent = "Keine Ankünfte gefunden."; return; }
+  if (!arr.length) { $("msg").textContent = "Kein Zug passt zum Filter. Setze den Filter zurück oder wähle andere Klassen/Nummern."; return; }
+  for (const a of arr) {
+    const pl = a.place || {};
+    const planned = pl.scheduledArrival || pl.arrival;
+    const actual = pl.arrival || planned;
+    const min = Math.round((new Date(actual) - new Date(planned)) / 60000);
+    let cls = "ok", txt = "pünktlich";
+    if (a.cancelled || a.tripCancelled) { cls = "bad"; txt = "fällt aus"; }
+    else if (!a.realTime) { cls = ""; txt = "keine Echtzeit"; }
+    else if (min >= 1) { cls = min >= 6 ? "bad" : "late"; txt = "+" + min + " min"; }
+    const li = document.createElement("li");
+    li.innerHTML = `<div class="time"></div><div class="line"></div><div class="delay ${cls}"></div><div class="from"></div>`;
+    li.querySelector(".time").textContent = fmt(actual);
+    li.querySelector(".line").textContent = a.displayName || a.routeShortName || "?";
+    li.querySelector(".delay").textContent = txt;
+    const from = (a.tripFrom && a.tripFrom.name) || "Herkunft unbekannt";
+    const track = pl.track ? " · Gl. " + pl.track : "";
+    const plan = (txt.startsWith("+") ? " · plan " + fmt(planned) : "");
+    li.querySelector(".from").textContent = "von " + from + track + plan;
+    li.className = "tap";
+    li.onclick = () => openTrip(a);
+    ul.appendChild(li);
+  }
+}
+let loaded = false;
+
+// ---------- Zugdetail: wo ist der Zug gerade? ----------
+let tripRef = null, tripTimer = null, firstScroll = false;
+const ms = iso => iso ? new Date(iso).getTime() : NaN;
+const tArr = p => p.arrival || p.departure;
+const tDep = p => p.departure || p.arrival;
+
+function openTrip(a) {
+  if (!a.tripId) { alert("Für diesen Zug liegen keine Fahrtdaten vor."); return; }
+  tripRef = {id: a.tripId, name: a.displayName || a.routeShortName || "Zug"};
+  $("dtitle").textContent = tripRef.name + (a.headsign ? " → " + a.headsign : "");
+  $("dupd").textContent = "";
+  $("banner").textContent = "Lade …";
+  $("stops").innerHTML = "";
+  $("detail").style.display = "block";
+  $("detail").scrollTop = 0;
+  document.body.style.overflow = "hidden";
+  firstScroll = true;
+  try { history.pushState({trip: 1}, ""); } catch (e) {}
+  loadTrip();
+  clearInterval(tripTimer);
+  tripTimer = setInterval(loadTrip, 30000);
+}
+function closeTrip(fromPop) {
+  $("detail").style.display = "none";
+  document.body.style.overflow = "";
+  clearInterval(tripTimer);
+  tripRef = null;
+  if (!fromPop) { try { if (history.state && history.state.trip) { skipPop = true; history.back(); } } catch (e) {} }
+}
+let skipPop = false;
+window.addEventListener("popstate", () => {
+  if (skipPop) { skipPop = false; return; }
+  if (tripRef) closeTrip(true);
+  else if (searchOpen) closeSearch(true);
+});
+$("dback").onclick = () => closeTrip(false);
+
+async function loadTrip() {
+  if (!tripRef) return;
+  try {
+    const t = await api(`/v5/trip?tripId=${encodeURIComponent(tripRef.id)}`);
+    if (!tripRef) return;
+    renderTrip(t);
+    $("dupd").textContent = "Stand " + new Date().toLocaleTimeString("de-DE", {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+  } catch (e) {
+    $("dupd").textContent = "Fehler: " + e.message;
+  }
+}
+
+function renderTrip(t) {
+  const legs = (t.legs || []).filter(l => l.from && l.to);
+  if (!legs.length) { $("banner").textContent = "Keine Fahrtdaten gefunden."; return; }
+
+  // Alle Halte der Fahrt in einer Liste (mehrere Teilstücke werden verbunden)
+  const pts = [];
+  for (const leg of legs) {
+    for (const p of [leg.from, ...(leg.intermediateStops || []), leg.to]) {
+      const last = pts[pts.length - 1];
+      if (last && (last.name === p.name)) {
+        last.departure = p.departure || last.departure;
+        last.scheduledDeparture = p.scheduledDeparture || last.scheduledDeparture;
+      } else pts.push(Object.assign({}, p));
+    }
+  }
+  const now = Date.now();
+  const anyRT = legs.some(l => l.realTime);
+
+  // Position bestimmen: an einem Halt oder zwischen zwei Halten
+  let state = {type: "end", i: pts.length - 1};
+  for (let i = 0; i < pts.length; i++) {
+    const a = ms(tArr(pts[i])), d = ms(tDep(pts[i]));
+    if (now < a) { state = i === 0 ? {type: "at", i: 0} : {type: "between", i}; break; }
+    if (now <= d) { state = {type: "at", i}; break; }
+  }
+
+  const delayOf = (p, which) => {
+    const act = which === "dep" ? tDep(p) : tArr(p);
+    const sch = which === "dep" ? (p.scheduledDeparture || p.scheduledArrival) : (p.scheduledArrival || p.scheduledDeparture);
+    return act && sch ? Math.round((ms(act) - ms(sch)) / 60000) : 0;
+  };
+
+  // Banner
+  const B = $("banner"); B.innerHTML = "";
+  const main = document.createElement("div");
+  const sub = document.createElement("small");
+  if (state.type === "at") {
+    const p = pts[state.i];
+    main.textContent = state.i === 0 && now < ms(tDep(p))
+      ? "Noch nicht abgefahren: " + p.name
+      : "Hält gerade in " + p.name;
+    sub.textContent = "Abfahrt " + fmt(tDep(p)) + (delayOf(p, "dep") >= 1 ? " (+" + delayOf(p, "dep") + " min)" : "");
+  } else if (state.type === "between") {
+    const from = pts[state.i - 1], to = pts[state.i];
+    main.textContent = "Unterwegs von " + from.name + " nach " + to.name;
+    const dl = delayOf(to, "arr");
+    sub.textContent = "Ankunft in " + to.name + " " + fmt(tArr(to)) + (dl >= 1 ? " (+" + dl + " min)" : "");
+  } else {
+    main.textContent = "Am Ziel angekommen: " + pts[pts.length - 1].name;
+    sub.textContent = "Die Fahrt ist beendet.";
+  }
+  if (!anyRT) sub.textContent += " · Position nur nach Fahrplan (keine Echtzeitdaten)";
+  B.appendChild(main); B.appendChild(sub);
+
+  // Haltliste
+  const ul = $("stops"); ul.innerHTML = "";
+  const addGap = text => {
+    const g = document.createElement("li"); g.className = "gap";
+    g.innerHTML = '<div></div><div class="rail"></div><div class="nm"></div>';
+    g.querySelector(".nm").textContent = text;
+    ul.appendChild(g);
+  };
+  pts.forEach((p, i) => {
+    if (state.type === "between" && state.i === i) addGap("▼ Zug ist hier unterwegs");
+    const li = document.createElement("li");
+    const past = state.type === "end" || i < (state.type === "between" ? state.i : state.i);
+    li.className = (past ? "past " : "") + (state.type !== "between" && state.i === i ? "cur " : "")
+      + ((stop && (p.stopId === stop.id || p.name === stop.name)) ? "mine " : "") + (p.cancelled ? "cancelled" : "");
+    li.innerHTML = '<div class="t"></div><div class="rail"><div class="dot"></div></div><div class="nm"><b></b><small></small></div><div class="dl"></div>';
+    const showT = i === 0 ? tDep(p) : tArr(p);
+    li.querySelector(".t").textContent = fmt(showT);
+    li.querySelector("b").textContent = p.name;
+    const bits = [];
+    if (p.track) bits.push("Gl. " + p.track);
+    if (p.cancelled) bits.push("Halt entfällt");
+    li.querySelector("small").textContent = bits.join(" · ");
+    const dl = delayOf(p, i === 0 ? "dep" : "arr");
+    const dlEl = li.querySelector(".dl");
+    if (dl >= 1) { dlEl.textContent = "+" + dl; dlEl.className = "dl " + (dl >= 6 ? "bad" : "late"); }
+    ul.appendChild(li);
+  });
+
+  if (firstScroll) {
+    firstScroll = false;
+    const target = ul.querySelector(".cur") || ul.querySelector(".gap");
+    if (target) target.scrollIntoView({block: "center"});
+  }
+}
+
+async function load() {
+  $("msg").textContent = "";
+  if (!stop) return;
+  $("station").textContent = stop.name;
+  $("upd").textContent = "Lade …";
+  try {
+    // Mehr Zeilen laden, damit nach dem Filtern noch genug übrig bleiben
+    const data = await api(`/v5/stoptimes?stopId=${encodeURIComponent(stop.id)}&n=60&arriveBy=true&time=${encodeURIComponent(new Date().toISOString())}&direction=LATER`);
+    let arr = data.stopTimes || [];
+    const rail = arr.filter(a => RAIL.test(a.mode || ""));
+    if (rail.length) arr = rail;
+    rows = arr;
+    loaded = true;
+    render();
+    $("upd").textContent = "Stand " + new Date().toLocaleTimeString("de-DE", {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+  } catch (e) {
+    $("upd").textContent = "Fehler";
+    $("msg").textContent = e.message;
+  }
+}
+
+function setStop(s) {
+  stop = s;
+  rows = []; loaded = false;
+  save(s);
+  $("q").value = "";
+  $("sugg").style.display = "none";
+  clearInterval(timer);
+  timer = setInterval(load, 60000);
+  load();
+}
+
+$("loc").onclick = async () => {
+  $("msg").textContent = "";
+  $("upd").textContent = "Standort wird ermittelt …";
+  try { setStop(await stopFromLocation()); }
+  catch (e) {
+    $("upd").textContent = "Fehler";
+    $("msg").textContent = e.code === 1 ? "Standortzugriff wurde verweigert. Bitte im Browser erlauben oder den Bahnhof eintippen." : e.message;
+  }
+};
+
+$("reload").onclick = load;
+
+let debounce = null;
+$("q").addEventListener("input", () => {
+  clearTimeout(debounce);
+  const v = $("q").value.trim();
+  if (v.length < 2) { $("sugg").style.display = "none"; return; }
+  debounce = setTimeout(async () => {
+    const box = $("sugg"); box.innerHTML = "";
+    try {
+      const j = (await api(`/v1/geocode?text=${encodeURIComponent(v)}&type=STOP&language=de`)).slice(0, 6);
+      for (const s of j) {
+        const d = document.createElement("div");
+        const area = (s.areas || []).find(a => a.default);
+        d.textContent = s.name + (area ? " · " + area.name : "");
+        d.onclick = () => setStop({id: s.id, name: s.name});
+        box.appendChild(d);
+      }
+      if (!j.length) box.innerHTML = "<div>Nichts gefunden</div>";
+    } catch (e) {
+      const d = document.createElement("div");
+      d.textContent = "Suche nicht erreichbar – " + e.message;
+      box.appendChild(d);
+    }
+    box.style.display = "block";
+  }, 300);
+});
+
+// ---------- Zugsuche nach Nummer (ohne Bahnhof) ----------
+let searchOpen = false, sScope = "de", sBusy = false;
+const pad = n => String(n).padStart(2, "0");
+const toLocalInput = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+function setWindow(hours) {
+  const a = new Date(), b = new Date(a.getTime() + hours * 3600000);
+  $("sfrom").value = toLocalInput(a);
+  $("sto").value = toLocalInput(b);
+}
+function drawSearchChips() {
+  const pre = $("spre"); pre.innerHTML = "";
+  for (const h of [2, 6, 12]) {
+    const b = document.createElement("button"); b.className = "chip"; b.textContent = "nächste " + h + " h";
+    b.onclick = () => setWindow(h); pre.appendChild(b);
+  }
+  const sc = $("sscope"); sc.innerHTML = "";
+  for (const [k, label] of [["de", "Deutschland (ICE/IC)"], ["near", "Mein Umkreis (alle Züge)"]]) {
+    const b = document.createElement("button"); b.className = "chip" + (sScope === k ? " on" : ""); b.textContent = label;
+    b.onclick = () => { sScope = k; drawSearchChips(); updateInfo(); }; sc.appendChild(b);
+  }
+}
+function updateInfo() {
+  $("sinfo").textContent = sScope === "de"
+    ? "Durchsucht ganz Deutschland, findet aber nur Fernverkehr (ICE, IC, EC). Für Regionalzüge wähle „Mein Umkreis“."
+    : "Nutzt deinen Standort und durchsucht etwa 20 km rundherum, dafür alle Zugarten.";
+}
+function openSearch() {
+  if (!$("sfrom").value) setWindow(6);
+  drawSearchChips(); updateInfo();
+  $("search").style.display = "block";
+  document.body.style.overflow = "hidden";
+  searchOpen = true;
+  try { history.pushState({search: 1}, ""); } catch (e) {}
+}
+function closeSearch(fromPop) {
+  $("search").style.display = "none";
+  if (!tripRef) document.body.style.overflow = "";
+  searchOpen = false;
+  if (!fromPop) { try { if (history.state && history.state.search) { skipPop = true; history.back(); } } catch (e) {} }
+}
+$("gosearch").onclick = openSearch;
+$("sback").onclick = () => closeSearch(false);
+$("sgo").onclick = runSearch;
+$("sn").addEventListener("keydown", e => { if (e.key === "Enter") runSearch(); });
+
+function matchTokens(names, tokens) {
+  const ns = names.filter(Boolean).map(x => String(x).toUpperCase().replace(/\s+/g, ""));
+  return tokens.some(t => ns.some(n => {
+    if (/^\d+$/.test(t)) { const d = n.match(/(\d+)$/); return d ? d[1] === t : false; }
+    return n.startsWith(t);
+  }));
+}
+
+// Karten-Abfrage mit automatischer Aufteilung, falls die Schnittstelle 422 ("zu groß") meldet
+let reqCount = 0;
+const MAXREQ = 40;
+async function mapTrips(b, t0, t1, zoom) {
+  if (++reqCount > MAXREQ) throw new Error("Für diesen Bereich liefert die Schnittstelle zu viele Daten. Wähle einen kürzeren Zeitraum oder „Mein Umkreis“.");
+  $("sinfo").textContent = "Lade Fahrten … (" + reqCount + " Teilabfragen)";
+  const q = `/v5/map/trips?zoom=${zoom}&min=${b[0].toFixed(4)},${b[1].toFixed(4)}&max=${b[2].toFixed(4)},${b[3].toFixed(4)}`
+          + `&startTime=${encodeURIComponent(new Date(t0).toISOString())}&endTime=${encodeURIComponent(new Date(t1).toISOString())}`;
+  try {
+    const r = await api(q);
+    return Array.isArray(r) ? r : (r.trips || []);
+  } catch (e) {
+    if (e.status !== 422) throw e;
+    const dt = t1 - t0, kmLat = (b[2] - b[0]) * 111, kmLon = (b[3] - b[1]) * 68;
+    // Unbekannt, was zu groß war: die Dimension halbieren, die im Verhältnis größer ist
+    const canTime = dt > 10 * 60000, canSpace = kmLat > 6 || kmLon > 6;
+    const ratioT = dt / (30 * 60000), ratioS = Math.max(kmLat, kmLon) / 15;
+    if (canTime && (ratioT >= ratioS || !canSpace)) {   // Zeitraum halbieren
+      const m = t0 + dt / 2;
+      const [x, y] = await Promise.all([mapTrips(b, t0, m, zoom), mapTrips(b, m, t1, zoom)]);
+      return x.concat(y);
+    }
+    if (canSpace) {                                // längere Seite des Gebiets halbieren
+      let b1, b2;
+      if (kmLat >= kmLon) { const m = (b[0] + b[2]) / 2; b1 = [b[0], b[1], m, b[3]]; b2 = [m, b[1], b[2], b[3]]; }
+      else { const m = (b[1] + b[3]) / 2; b1 = [b[0], b[1], b[2], m]; b2 = [b[0], m, b[2], b[3]]; }
+      const [x, y] = await Promise.all([mapTrips(b1, t0, t1, zoom), mapTrips(b2, t0, t1, zoom)]);
+      return x.concat(y);
+    }
+    throw e;
+  }
+}
+
+async function runSearch() {
+  if (sBusy) return;
+  const tokens = $("sn").value.split(/[,;]+/).map(x => x.toUpperCase().replace(/\s+/g, "")).filter(Boolean);
+  const ul = $("sres"); ul.innerHTML = "";
+  if (!tokens.length) { $("sinfo").textContent = "Bitte eine Zugnummer eingeben, z. B. 1601 oder ICE 1601."; return; }
+  const from = new Date($("sfrom").value), to = new Date($("sto").value);
+  if (isNaN(from) || isNaN(to) || to <= from) { $("sinfo").textContent = "Bitte einen gültigen Zeitraum wählen (Bis muss nach Von liegen)."; return; }
+  if (to - from > 12 * 3600000) { $("sinfo").textContent = "Der Zeitraum darf höchstens 12 Stunden lang sein."; return; }
+
+  sBusy = true; $("sgo").textContent = "Suche läuft …";
+  try {
+    let box, zoom;
+    if (sScope === "de") { box = [47.2, 5.8, 55.1, 15.1]; zoom = 6; }
+    else {
+      $("sinfo").textContent = "Standort wird ermittelt …";
+      const p = await getPos();
+      const la = p.coords.latitude, lo = p.coords.longitude;
+      box = [la - 0.18, lo - 0.28, la + 0.18, lo + 0.28];   // etwa 40 x 40 km
+      zoom = 10;
+    }
+    reqCount = 0;
+    $("sinfo").textContent = "Lade Fahrten …";
+    const list = await mapTrips(box, from.getTime(), to.getTime(), zoom);
+    const found = new Map();
+    let total = 0;
+    for (const sg of list) {
+      if (sg.mode && !RAIL.test(sg.mode)) continue;
+      for (const t of (sg.trips || [])) {
+        total++;
+        if (!matchTokens([t.displayName, t.routeShortName, t.tripShortName], tokens)) continue;
+        const f = found.get(t.tripId) || {id: t.tripId, name: t.displayName || t.routeShortName || "Zug", dep: sg.departure, arr: sg.arrival, from: sg.from && sg.from.name, to: sg.to && sg.to.name};
+        if (ms(sg.departure) < ms(f.dep)) { f.dep = sg.departure; f.from = sg.from && sg.from.name; }
+        if (ms(sg.arrival) > ms(f.arr)) { f.arr = sg.arrival; f.to = sg.to && sg.to.name; }
+        found.set(t.tripId, f);
+      }
+    }
+    const res = [...found.values()].sort((a, b) => ms(a.dep) - ms(b.dep));
+    $("sinfo").textContent = res.length
+      ? `${res.length} Treffer (von ${total} geprüften Fahrten). Tippe einen Zug an, um den Verlauf zu sehen.`
+      : `Kein Zug mit dieser Nummer gefunden (${total} Fahrten geprüft). Prüfe Nummer und Zeitraum${sScope === "de" ? " oder versuche „Mein Umkreis“ für Regionalzüge" : ""}.`;
+    for (const r of res) {
+      const li = document.createElement("li"); li.className = "tap";
+      li.innerHTML = '<div class="time"></div><div class="line"></div><div class="delay"></div><div class="from"></div>';
+      li.querySelector(".time").textContent = fmt(r.dep);
+      li.querySelector(".line").textContent = r.name;
+      li.querySelector(".from").textContent = (r.from || "?") + " → " + (r.to || "?") + " · im gewählten Zeitraum";
+      li.onclick = () => openTrip({tripId: r.id, displayName: r.name});
+      ul.appendChild(li);
+    }
+  } catch (e) {
+    $("sinfo").textContent = e.code === 1 ? "Standortzugriff wurde verweigert. Erlaube ihn im Browser oder wähle „Deutschland“." : "Fehler: " + e.message;
+  } finally {
+    sBusy = false; $("sgo").textContent = "Suchen";
+  }
+}
+
+loadFilter();
+$("num").value = numQuery;
+drawChips();
+$("num").addEventListener("input", () => { numQuery = $("num").value; saveFilter(); render(); });
+$("clr").onclick = () => { selClasses.clear(); numQuery = ""; $("num").value = ""; saveFilter(); drawChips(); render(); };
+
+if ("serviceWorker" in navigator) {
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloaded = false;
+  // Neue App-Version erkannt -> Seite einmal neu laden
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (hadController && !reloaded) { reloaded = true; location.reload(); }
+  });
+  navigator.serviceWorker.register("sw.js").then(reg => {
+    reg.update();
+    // Bei jedem Zurückkehren in die App nach einer neuen Version suchen
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) reg.update(); });
+  }).catch(() => {});
+}
+
+const last = restore();
+if (last) setStop(last); else $("loc").click();
+</script>
+</body>
+</html>
