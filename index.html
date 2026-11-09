@@ -106,7 +106,7 @@
 </header>
 <div id="msg"></div>
 <ul id="list"></ul>
-<footer>Daten: <a href="https://transitous.org/sources/">Transitous</a> · Karten: © OpenStreetMap-Mitwirkende · Version 11</footer>
+<footer>Daten: <a href="https://transitous.org/sources/">Transitous</a> · Karten: © OpenStreetMap-Mitwirkende · Version 13</footer>
 
 <div id="detail">
   <header>
@@ -231,11 +231,14 @@ async function dbTripId(a) {
     stop.id = ex.id; save(stop);
   }
   const t0 = new Date(d.planned.getTime() - 15 * 60000);
-  const data = await api(`/v5/stoptimes?stopId=${encodeURIComponent(stop.id)}&n=60&arriveBy=true&time=${encodeURIComponent(t0.toISOString())}&direction=LATER`);
-  const want = String(d.num).replace(/\D/g, "");
+  const data = await api(`/v5/stoptimes?stopId=${encodeURIComponent(stop.id)}&n=200&arriveBy=true&time=${encodeURIComponent(t0.toISOString())}&direction=LATER`);
+  const unz = x => String(x).replace(/^0+/, "");
+  const want = unz(String(d.num).replace(/\D/g, ""));
   let best = null, bestDiff = Infinity;
   for (const st of (data.stopTimes || [])) {
-    const nums = [st.tripShortName, st.displayName, st.routeShortName].filter(Boolean).map(x => (String(x).match(/(\d+)\s*$/) || [])[1]);
+    if (st.mode && !RAIL.test(st.mode)) continue;
+    const nums = [st.tripShortName, st.displayName, st.routeShortName].filter(Boolean)
+      .flatMap(x => (String(x).match(/\d+/g) || []).map(unz));
     if (!want || !nums.includes(want)) continue;
     const diff = Math.abs(ms(st.place && st.place.scheduledArrival) - d.planned.getTime());
     if (diff < bestDiff) { best = st; bestDiff = diff; }
@@ -541,8 +544,9 @@ async function load() {
     let got = false, dbErr = "";
     try {
       if (!stop.eva) { stop.eva = await dbEva(stop.name); save(stop); }
-      rows = await dbBoard(stop.eva, stop.name);
-      got = true; usedDB = true;
+      const dbRows = await dbBoard(stop.eva, stop.name);
+      if (!dbRows.length) throw new Error("DB liefert für diesen Bahnhof keine Ankünfte");
+      rows = dbRows; got = true; usedDB = true;
     } catch (e) { dbErr = e.message; }
     if (!got) {            // Ersatz: Transitous (weniger zuverlässige Echtzeit)
       usedDB = false;
@@ -572,7 +576,7 @@ function drawFooter() {
   document.querySelector("footer").innerHTML = (usedDB
     ? 'Daten: DB InfraGO AG, <a href="https://creativecommons.org/licenses/by/4.0/deed.de">CC BY 4.0</a> (Timetables-API)'
     : 'Daten: <a href="https://transitous.org/sources/">Transitous</a>')
-    + ' · Zuglauf: Transitous · Karten: © OpenStreetMap-Mitwirkende · Version 11';
+    + ' · Zuglauf: Transitous · Karten: © OpenStreetMap-Mitwirkende · Version 13';
 }
 
 function setStop(s) {
